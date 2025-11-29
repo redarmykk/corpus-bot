@@ -2070,28 +2070,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    if text == "🥗 Питание":
-        if not has_sub:
-            await update.message.reply_text(
-                "Раздел «Питание» доступен только по активной подписке 🔒\n\n"
-                "Чтобы получить доступ, сначала оформите подписку.",
-                reply_markup=ReplyKeyboardMarkup(
-                    [["Подписка", "Вернуться в меню"]],
-                    resize_keyboard=True,
-                ),
-                protect_content=True,
-            )
-            return
-
-        await update.message.reply_text(
-            "Подробнее о питании Вы можете посмотреть в данной группе - ",
-            reply_markup=ReplyKeyboardMarkup(
-                [["Вернуться в меню"]],
-                resize_keyboard=True,
-            ),
-            protect_content=True,
-        )
-        return
 
     # Тренировки
     if text == "🏋🏽‍♀️Тренировка":
@@ -2110,6 +2088,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Где будете тренироваться?",
             reply_markup=kb_place(),
+            protect_content=True,
+        )
+        return
+    
+    #ПИТАНИЕ
+    if text == "🥗Питание":
+        if not has_sub:
+            await update.message.reply_text(
+                "Раздел «Питание» доступен только по активной подписке 🔒\n\n"
+                "Чтобы получить доступ, сначала оформите подписку.",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["Подписка", "Вернуться в меню"]],
+                    resize_keyboard=True,
+                ),
+                protect_content=True,
+            )
+            return
+
+        await update.message.reply_text(
+            "Подробнее о питании Вы можете посмотреть в данной группе - ",
+            reply_markup=ReplyKeyboardMarkup(
+                [["Вернуться в меню"]],
+                resize_keyboard=True,
+            ),
             protect_content=True,
         )
         return
