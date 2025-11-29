@@ -15,6 +15,8 @@ from telegram.ext import (
 
 from pathlib import Path
 
+DB_NAME = "subscriptions.db" 
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "subscriptions.db"
 
@@ -137,7 +139,7 @@ def create_or_extend_subscription(user_id: int) -> dict:
     save_subscription(user_id, new_start, new_end)
     return {"start": new_start, "end": new_end}
 
-# ====== РУЧНАЯ ВЫДАЧА ПОДПИСКИ АДМИНОМ ======
+
 # ====== РУЧНАЯ ВЫДАЧА ПОДПИСКИ АДМИНОМ ======
 def manual_grant_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DAYS):
     """
@@ -162,6 +164,29 @@ def manual_grant_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DA
 
     return {"start": start, "end": end}
 
+def cancel_subscription_in_db(user_id: int):
+    """
+    Обрезать подписку пользователя: ставим дату окончания в прошлое,
+    чтобы user_has_subscription() сразу начал возвращать False.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    # today - 1 день => подписка уже истекла
+    today = datetime.now(timezone.utc).date()
+    end_date = (today - timedelta(days=1)).isoformat()
+
+    cur.execute(
+        """
+        UPDATE subscriptions
+        SET end_date = ?
+        WHERE user_id = ?
+        """,
+        (end_date, user_id),
+    )
+
+    conn.commit()
+    conn.close()
 
 def user_has_subscription(user_id: int) -> bool:
     """
@@ -1968,6 +1993,36 @@ async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Окончание: {sub['end'].strftime('%d.%m.%Y')}"
     )
 
+# ====== /revoke — забрать подписку у пользователя (ТОЛЬКО АДМИН) ======
+async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = update.effective_user.id
+    if admin_id not in DEV_USER_IDS:
+        await update.message.reply_text("Эта команда только для администратора бота.")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/revoke <user_id>\n\n"
+            "Пример:\n"
+            "/revoke 503160725"
+        )
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("user_id должен быть числом.")
+        return
+
+    # Обрезаем подписку в БД
+    cancel_subscription_in_db(target_user_id)
+
+    await update.message.reply_text(
+        "Подписка у пользователя отозвана ✅\n"
+        f"user_id: {target_user_id}"
+    )
+
 # ====== START ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # сохраняем только дату последней тренировки
@@ -2487,7 +2542,8 @@ def main():
     app.add_handler(CommandHandler("devsub", cmd_devsub))
     app.add_handler(CommandHandler("subs", cmd_subs))
     app.add_handler(CommandHandler("refund", cmd_refund))
-    app.add_handler(CommandHandler("grant", cmd_grant))     # 👉 РУЧНАЯ ВЫДАЧА ПОДПИСКИ
+    app.add_handler(CommandHandler("grant", cmd_grant))     
+    app.add_handler(CommandHandler("revoke", cmd_revoke)) 
 
 
     # Payments
