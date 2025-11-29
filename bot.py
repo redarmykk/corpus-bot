@@ -137,6 +137,31 @@ def create_or_extend_subscription(user_id: int) -> dict:
     save_subscription(user_id, new_start, new_end)
     return {"start": new_start, "end": new_end}
 
+# ====== РУЧНАЯ ВЫДАЧА ПОДПИСКИ АДМИНОМ ======
+def manual_grant_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DAYS):
+    """
+    Выдать или продлить подписку пользователю вручную (например, без оплаты).
+    Если подписка ещё активна — продлеваем от даты окончания.
+    Если истекла или её не было — считаем от сегодня.
+    """
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).date()
+    sub = load_subscription(user_id)  # предполагаем, что функция уже есть
+
+    if sub and sub["end"] >= today:
+        # уже есть активная подписка — продлеваем
+        start = sub["start"]
+        end = sub["end"] + timedelta(days=days)
+    else:
+        # новой/просроченная — создаём с нуля
+        start = today
+        end = today + timedelta(days=days)
+
+    # charge_id помечаем как ручная выдача
+    save_subscription(user_id, start, end, charge_id="manual_grant")
+    return {"start": start, "end": end}
+
 
 def user_has_subscription(user_id: int) -> bool:
     """
@@ -1901,6 +1926,48 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         disable_web_page_preview=True,
     )
 
+# ====== /grant — выдать/продлить подписку пользователю (ТОЛЬКО ДЛЯ АДМИНА) ======
+async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = update.effective_user.id
+    if admin_id not in DEV_USER_IDS:
+        await update.message.reply_text("Эта команда только для администратора бота.")
+        return
+
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/grant <user_id> [days]\n\n"
+            "<user_id> — Telegram ID пользователя,\n"
+            "[days] — на сколько дней выдать/продлить (по умолчанию 365)."
+        )
+        return
+
+    # user_id
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("user_id должен быть числом.")
+        return
+
+    # days (опционально)
+    if len(context.args) >= 2:
+        try:
+            days = int(context.args[1])
+        except ValueError:
+            await update.message.reply_text("days должен быть числом (количество дней).")
+            return
+    else:
+        days = SUBSCRIPTION_DURATION_DAYS  # по умолчанию 365
+
+    sub = manual_grant_subscription(target_user_id, days)
+
+    await update.message.reply_text(
+        "Подписка выдана/продлена вручную ✅\n"
+        f"user_id: {target_user_id}\n"
+        f"Начало: {sub['start'].strftime('%d.%m.%Y')}\n"
+        f"Окончание: {sub['end'].strftime('%d.%m.%Y')}"
+    )
+
 # ====== START ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # сохраняем только дату последней тренировки
@@ -2420,6 +2487,8 @@ def main():
     app.add_handler(CommandHandler("devsub", cmd_devsub))
     app.add_handler(CommandHandler("subs", cmd_subs))
     app.add_handler(CommandHandler("refund", cmd_refund))
+    app.add_handler(CommandHandler("grant", cmd_grant))     # 👉 РУЧНАЯ ВЫДАЧА ПОДПИСКИ
+
 
     # Payments
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
