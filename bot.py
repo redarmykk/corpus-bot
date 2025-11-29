@@ -147,19 +147,21 @@ def manual_grant_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DA
     from datetime import datetime, timezone
 
     today = datetime.now(timezone.utc).date()
-    sub = load_subscription(user_id)  # предполагаем, что функция уже есть
+    sub = load_subscription(user_id)  # уже существующая функция
 
     if sub and sub["end"] >= today:
-        # уже есть активная подписка — продлеваем
+        # уже есть активная подписка — продлеваем от даты окончания
         start = sub["start"]
         end = sub["end"] + timedelta(days=days)
     else:
-        # новой/просроченная — создаём с нуля
+        # новой/просроченная — создаём с нуля от сегодня
         start = today
         end = today + timedelta(days=days)
 
-    # charge_id помечаем как ручная выдача
-    save_subscription(user_id, start, end, charge_id="manual_grant")
+    # ⚠️ ВАЖНО: вызываем save_subscription ПОЗИЦИОННО
+    # третий/четвёртый аргумент — твой charge_id / payment_id, помечаем как ручная выдача
+    save_subscription(user_id, start, end, "manual_grant")
+
     return {"start": start, "end": end}
 
 
