@@ -2015,11 +2015,23 @@ async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("user_id должен быть числом.")
         return
 
-    # Обрезаем подписку в БД
-    cancel_subscription_in_db(target_user_id)
+    # 🔴 Полностью убираем подписку из БД
+    try:
+        revoke_subscription(target_user_id)  # <- использует твою функцию выше, которая делает DELETE FROM subscriptions
+    except Exception as e:
+        await update.message.reply_text(f"Не удалось забрать подписку: {e}")
+        return
+
+    # 💾 На всякий случай чистим возможный кеш в user_data
+    try:
+        ud = context.application.user_data.get(target_user_id)
+        if ud:
+            ud.pop("has_subscription", None)
+    except Exception:
+        pass
 
     await update.message.reply_text(
-        "Подписка у пользователя отозвана ✅\n"
+        "Подписка пользователя отозвана ✅\n"
         f"user_id: {target_user_id}"
     )
 
