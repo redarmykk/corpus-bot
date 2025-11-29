@@ -2105,7 +2105,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         await update.message.reply_text(
-            "Подробнее о питании Вы можете посмотреть в данной группе - ",
+            "Подробнее о питании Вы можете посмотреть в данной группе - https://t.me/+AOT_lFEIZzo5NTNi",
             reply_markup=ReplyKeyboardMarkup([["Вернуться в меню"]], resize_keyboard=True),
             protect_content=True,
         )
