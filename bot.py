@@ -138,16 +138,15 @@ def create_or_extend_subscription(user_id: int) -> dict:
     return {"start": new_start, "end": new_end}
 
 # ====== РУЧНАЯ ВЫДАЧА ПОДПИСКИ АДМИНОМ ======
+# ====== РУЧНАЯ ВЫДАЧА ПОДПИСКИ АДМИНОМ ======
 def manual_grant_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DAYS):
     """
     Выдать или продлить подписку пользователю вручную (например, без оплаты).
     Если подписка ещё активна — продлеваем от даты окончания.
     Если истекла или её не было — считаем от сегодня.
     """
-    from datetime import datetime, timezone
-
     today = datetime.now(timezone.utc).date()
-    sub = load_subscription(user_id)  # уже существующая функция
+    sub = load_subscription(user_id)  # уже существующая функция, читает из БД
 
     if sub and sub["end"] >= today:
         # уже есть активная подписка — продлеваем от даты окончания
@@ -158,9 +157,8 @@ def manual_grant_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DA
         start = today
         end = today + timedelta(days=days)
 
-    # ⚠️ ВАЖНО: вызываем save_subscription ПОЗИЦИОННО
-    # третий/четвёртый аргумент — твой charge_id / payment_id, помечаем как ручная выдача
-    save_subscription(user_id, start, end, "manual_grant")
+    # ⚠️ ВАЖНО: save_subscription принимает только 3 аргумента
+    save_subscription(user_id, start, end)
 
     return {"start": start, "end": end}
 
