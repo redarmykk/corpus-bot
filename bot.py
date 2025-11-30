@@ -15,19 +15,31 @@ from telegram.ext import (
 
 from pathlib import Path
 
-DB_NAME = "subscriptions.db" 
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "subscriptions.db"
-
 from datetime import datetime, date, timezone, timedelta
 import sqlite3
 import aiohttp
+import asyncio
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("Переменная окружения BOT_TOKEN не установлена")
+
+# ====== НАСТРОЙКИ ПУТИ К БД ======
+
+BASE_DIR = Path(__file__).resolve().parent
+
+# Если бот запущен на Railway и примонтирован volume в /data – используем его.
+# Локально (на компе), где /data нет, БД будет лежать рядом со скриптом.
+if Path("/data").exists():
+    DB_DIR = Path("/data")
+else:
+    DB_DIR = BASE_DIR
+
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "subscriptions.db"
+
+print(">>> DB_PATH =", DB_PATH.resolve())
 
 ADMIN_CHAT_ID = 503160725  # твой Telegram ID
 
@@ -2118,6 +2130,21 @@ async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"user_id: {target_user_id}"
     )
 
+# ====== /restart — перезапуск бота (ТОЛЬКО ДЛЯ АДМИНА) ======
+async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in DEV_USER_IDS:
+        await update.message.reply_text("Эта команда только для администратора бота.")
+        return
+
+    await update.message.reply_text("Перезапускаю бота…")
+
+    # даём сообщению улететь
+    await asyncio.sleep(1)
+
+    # жёстко выходим из процесса — Railway сам перезапустит контейнер
+    os._exit(0)
+
 # ====== START ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # сохраняем только дату последней тренировки
@@ -2660,6 +2687,7 @@ def main():
     app.add_handler(CommandHandler("refund", cmd_refund))
     app.add_handler(CommandHandler("grant", cmd_grant))     
     app.add_handler(CommandHandler("revoke", cmd_revoke)) 
+    app.add_handler(CommandHandler("restart", cmd_restart))
 
 
     # Payments
