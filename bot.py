@@ -2143,7 +2143,7 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(1)
 
     # жёстко выходим из процесса — Railway сам перезапустит контейнер
-    os._exit(0)
+    os._exit(1)
 
 # ====== START ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
