@@ -86,6 +86,74 @@ def init_db():
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen  TEXT NOT NULL,
+            starts_count INTEGER NOT NULL DEFAULT 0,
+            trainings_opened INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def track_user_event(
+    user_id: int,
+    username: str | None = None,
+    is_start: bool = False,
+    opened_training: bool = False,
+):
+    """
+    Записываем/обновляем информацию о пользователе:
+    - first_seen / last_seen
+    - счётчик стартов
+    - счётчик открытых тренировок
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    # есть ли уже пользователь
+    cur.execute("SELECT first_seen, last_seen, starts_count, trainings_opened FROM users WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+
+    if row is None:
+        # новый пользователь
+        starts = 1 if is_start else 0
+        trainings = 1 if opened_training else 0
+        cur.execute(
+            """
+            INSERT INTO users (user_id, username, first_seen, last_seen, starts_count, trainings_opened)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, username, now_iso, now_iso, starts, trainings),
+        )
+    else:
+        first_seen, last_seen, starts_count, trainings_opened = row
+        if is_start:
+            starts_count += 1
+        if opened_training:
+            trainings_opened += 1
+
+        cur.execute(
+            """
+            UPDATE users
+            SET username = COALESCE(?, username),
+                last_seen = ?,
+                starts_count = ?,
+                trainings_opened = ?
+            WHERE user_id = ?
+            """,
+            (username, now_iso, starts_count, trainings_opened, user_id),
+        )
+
     conn.commit()
     conn.close()
 
@@ -1881,6 +1949,53 @@ async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     admin_id = update.effective_user.id
 
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = update.effective_user.id
+    if admin_id not in DEV_USER_IDS:
+        await update.message.reply_text("Эта команда только для администратора.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    # всего уникальных пользователей
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()[0] or 0
+
+    # новые за последние 7 дней
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM users
+        WHERE datetime(first_seen) >= datetime('now', '-7 days')
+        """
+    )
+    new_7d = cur.fetchone()[0] or 0
+
+    # кто открывал хоть одну тренировку
+    cur.execute("SELECT COUNT(*) FROM users WHERE trainings_opened > 0")
+    trained_users = cur.fetchone()[0] or 0
+
+    # активные подписки
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM subscriptions
+        WHERE date(end_date) >= date('now')
+        """
+    )
+    active_subs = cur.fetchone()[0] or 0
+
+    conn.close()
+
+    msg = (
+        "📊 Статистика бота:\n\n"
+        f"👥 Всего уникальных пользователей: <b>{total_users}</b>\n"
+        f"🆕 Новых за 7 дней: <b>{new_7d}</b>\n"
+        f"🏋️‍♀️ Открывали тренировки: <b>{trained_users}</b>\n"
+        f"✅ Активных подписок: <b>{active_subs}</b>\n"
+    )
+
+    await update.message.reply_text(msg, parse_mode="HTML")
+
     # ---- проверка админа ----
     if admin_id not in DEV_USER_IDS:
         await message.reply_text("Эта команда только для администратора бота.")
@@ -2147,6 +2262,8 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ====== START ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    track_user_event(user.id, user.username, is_start=True)
     # сохраняем только дату последней тренировки
     last_date = context.user_data.get("last_training_date")
     context.user_data.clear()
@@ -2253,7 +2370,12 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 # ====== ОСНОВНОЙ ХЕНДЛЕР ТЕКСТА ======
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+
+    # фиксируем любой визит / активность
+    track_user_event(user_id, user.username)
+
     has_sub = user_has_subscription(user_id)
 
     # возврат в меню
@@ -2562,7 +2684,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== ТРЕНИРОВКА + ОГРАНИЧЕНИЕ 1 В ДЕНЬ (кроме админа) ======
 async def send_training(update: Update, context: ContextTypes.DEFAULT_TYPE, place: str, month: str, training_num: str):
     chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+
+    # считаем открытие тренировки
+    track_user_event(user_id, user.username, opened_training=True)
 
     # 👉 Админ (из DEV_USER_IDS) тренируется без ограничения
     if user_id not in DEV_USER_IDS and month != "trial":
@@ -2688,6 +2814,7 @@ def main():
     app.add_handler(CommandHandler("grant", cmd_grant))     
     app.add_handler(CommandHandler("revoke", cmd_revoke)) 
     app.add_handler(CommandHandler("restart", cmd_restart))
+    app.add_handler(CommandHandler("stats", cmd_stats))
 
 
     # Payments
