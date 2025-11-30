@@ -46,8 +46,8 @@ ADMIN_CHAT_ID = 503160725  # твой Telegram ID
 
 # ====== НАСТРОЙКИ ПОДПИСКИ / TELEGRAM STARS ======
 SUBSCRIPTION_PAYLOAD = "corpus_subscription_year_v1"  # payload инвойса
-SUBSCRIPTION_PRICE_STARS = 1                       # 🎯 цена в звёздах
-DEV_USER_IDS = {503160725}                            # твой tg user_id
+SUBSCRIPTION_PRICE_STARS = 4990                       # 🎯 цена в звёздах
+DEV_USER_IDS = {503160725, 304498036}                            # твой tg user_id
 SUBSCRIPTION_DURATION_DAYS = 365                      # длительность подписки
 
 
