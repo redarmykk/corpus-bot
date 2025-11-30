@@ -47,7 +47,7 @@ ADMIN_CHAT_ID = 503160725  # твой Telegram ID
 # ====== НАСТРОЙКИ ПОДПИСКИ / TELEGRAM STARS ======
 SUBSCRIPTION_PAYLOAD = "corpus_subscription_year_v1"  # payload инвойса
 SUBSCRIPTION_PRICE_STARS = 4990                       # 🎯 цена в звёздах
-DEV_USER_IDS = {503160725, 304498036}                            # твой tg user_id
+DEV_USER_IDS = {304498036}                            # твой tg user_id
 SUBSCRIPTION_DURATION_DAYS = 365                      # длительность подписки
 
 
@@ -1943,12 +1943,6 @@ async def cmd_devsub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb_main(),
     )
 
-# ====== /refund — рефанд платежа Stars + удаление подписки ======
-async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # безопасное сообщение (иногда update.message == None)
-    message = update.effective_message
-    admin_id = update.effective_user.id
-
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
     if admin_id not in DEV_USER_IDS:
@@ -1995,6 +1989,12 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(msg, parse_mode="HTML")
+
+# ====== /refund — рефанд платежа Stars + удаление подписки ======
+async def cmd_refund(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # безопасное сообщение (иногда update.message == None)
+    message = update.effective_message
+    admin_id = update.effective_user.id
 
     # ---- проверка админа ----
     if admin_id not in DEV_USER_IDS:
