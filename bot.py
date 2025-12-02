@@ -23,7 +23,9 @@ import asyncio
 import os
 from content_data import VIDEO_IDS, TRAINING_TEXTS, MONTH_DESCRIPTIONS
 
-TOKEN = "8273936207:AAFm_Bj5djTHtgnQbs1Ow0VHReijDMSdrJQ"
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("Переменная окружения BOT_TOKEN не установлена")
 
 # ====== НАСТРОЙКИ ПУТИ К БД ======
 
