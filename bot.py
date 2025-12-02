@@ -47,14 +47,8 @@ ADMIN_CHAT_ID = 503160725  # твой Telegram ID
 # ====== НАСТРОЙКИ ПОДПИСКИ / TELEGRAM STARS ======
 SUBSCRIPTION_PAYLOAD = "corpus_subscription_year_v1"  # payload инвойса
 SUBSCRIPTION_PRICE_STARS = 4990                       # 🎯 цена в звёздах
-SUBSCRIPTION_DURATION_DAYS = 365                      # длительность подписки
-
-# Месячный тариф
-SUBSCRIPTION_MONTH_PAYLOAD = "corpus_subscription_month_v1"  # payload инвойса (МЕСЯЦ)
-SUBSCRIPTION_MONTH_PRICE_STARS = 1790                        # 🎯 цена в звёздах (МЕСЯЦ)
-SUBSCRIPTION_MONTH_DURATION_DAYS = 30                        # длительность подписки (МЕСЯЦ)
-
 DEV_USER_IDS = {503160725, 304498036}                            # твой tg user_id
+SUBSCRIPTION_DURATION_DAYS = 365                      # длительность подписки
 
 
 def revoke_subscription(user_id: int):
@@ -201,9 +195,9 @@ def save_subscription(user_id: int, start, end):
     conn.close()
 
 
-def create_or_extend_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DAYS) -> dict:
+def create_or_extend_subscription(user_id: int) -> dict:
     """
-    Создаём или продлеваем подписку на days дней.
+    Создаём или продлеваем подписку на SUBSCRIPTION_DURATION_DAYS дней.
     Если подписка ещё действует — продлеваем от даты окончания.
     Если уже истекла или не было — считаем от сегодняшней даты.
     """
@@ -213,11 +207,11 @@ def create_or_extend_subscription(user_id: int, days: int = SUBSCRIPTION_DURATIO
     if current and current["end"] >= today:
         # продлеваем от текущей даты окончания
         new_start = current["start"]
-        new_end = current["end"] + timedelta(days=days)
+        new_end = current["end"] + timedelta(days=SUBSCRIPTION_DURATION_DAYS)
     else:
         # новая или просроченная
         new_start = today
-        new_end = today + timedelta(days=days)
+        new_end = today + timedelta(days=SUBSCRIPTION_DURATION_DAYS)
 
     save_subscription(user_id, new_start, new_end)
     return {"start": new_start, "end": new_end}
@@ -2284,50 +2278,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ====== ОТПРАВКА ИНВОЙСА НА ПОДПИСКУ ======
-async def send_subscription_invoice(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    *,
-    kind: str = "year",  # "year" или "month"
-):
+async def send_subscription_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # Выбор тарифа
-    if kind == "month":
-        payload = SUBSCRIPTION_MONTH_PAYLOAD
-        price = SUBSCRIPTION_MONTH_PRICE_STARS
-        title = "Подписка CORPUS (1 месяц)"
-        description = "Оплата за 1 месяц доступа ко всем тренировкам бота."
-    else:
-        payload = SUBSCRIPTION_PAYLOAD
-        price = SUBSCRIPTION_PRICE_STARS
-        title = "Подписка CORPUS (1 год)"
-        description = "Разовый платёж за годовой доступ ко всем тренировкам бота."
+    if user_has_subscription(user_id):
+        start_d, end_d = get_subscription_dates(user_id)
+        if start_d and end_d:
+            txt = (
+                "У Вас уже есть активная подписка ✅\n\n"
+                f"Начало: {start_d.strftime('%d.%m.%Y')}\n"
+                f"Окончание: {end_d.strftime('%d.%m.%Y')}\n\n"
+                "Можеште открывать любые тренировки."
+            )
+        else:
+            txt = (
+                "У Вас уже есть активная подписка ✅\n"
+                "Можете открывать любые тренировки."
+            )
+
+        await update.message.reply_text(txt, reply_markup=kb_main())
+        return
 
     prices = [
         LabeledPrice(
-            label=title,
-            amount=price,
+            label="Годовая подписка CORPUS",
+            amount=SUBSCRIPTION_PRICE_STARS,
         )
     ]
 
-    # Если хочешь, можно показывать инфу о текущей подписке перед оплатой:
-    start_d, end_d = get_subscription_dates(user_id)
-    if start_d and end_d:
-        await update.message.reply_text(
-            "Текущая подписка:\n"
-            f"Начало: {start_d.strftime('%d.%m.%Y')}\n"
-            f"Окончание: {end_d.strftime('%d.%m.%Y')}\n\n"
-            "Новый платёж продлит её на выбранный срок.",
-            protect_content=True,
-        )
-
     await context.bot.send_invoice(
         chat_id=chat_id,
-        title=title,
-        description=description,
-        payload=payload,
+        title="Подписка CORPUS (1 год)",
+        description="Разовый платёж за годовой доступ ко всем тренировкам бота.",
+        payload=SUBSCRIPTION_PAYLOAD,
         provider_token="",
         currency="XTR",
         prices=prices,
@@ -2339,10 +2323,10 @@ async def send_subscription_invoice(
 async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
 
-    if query.invoice_payload not in (SUBSCRIPTION_PAYLOAD, SUBSCRIPTION_MONTH_PAYLOAD):
+    if query.invoice_payload != SUBSCRIPTION_PAYLOAD:
         await query.answer(
             ok=False,
-            error_message="Неизвестный платёж. Попробуйте ещё раз или напишите в /paysupport.",
+            error_message="Неизвестный платёж. Попробуйте ещё раз или напиши в /paysupport.",
         )
         return
 
@@ -2365,23 +2349,16 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         currency=sp.currency,
     )
 
-    # Проверяем правильный payload и выбираем длительность
-    if sp.currency == "XTR" and sp.invoice_payload in (SUBSCRIPTION_PAYLOAD, SUBSCRIPTION_MONTH_PAYLOAD):
-        if sp.invoice_payload == SUBSCRIPTION_PAYLOAD:
-            days = SUBSCRIPTION_DURATION_DAYS
-            human_period = "1 год"
-        else:
-            days = SUBSCRIPTION_MONTH_DURATION_DAYS
-            human_period = "1 месяц"
-
-        sub = create_or_extend_subscription(user_id, days)
+    # Проверяем правильный payload
+    if sp.currency == "XTR" and sp.invoice_payload == SUBSCRIPTION_PAYLOAD:
+        sub = create_or_extend_subscription(user_id)
         start, end = sub["start"], sub["end"]
 
         await update.message.reply_text(
             "Оплата прошла успешно ✅\n"
-            f"Ваша подписка ({human_period}) активирована.\n\n"
-            f"Начало: {start.strftime('%d.%м.%Y')}\n"
-            f"Окончание: {end.strftime('%d.%м.%Y')}\n\n"
+            "Ваша подписка активирована.\n\n"
+            f"Начало: {start.strftime('%d.%m.%Y')}\n"
+            f"Окончание: {end.strftime('%d.%m.%Y')}\n\n"
             "Теперь Вам доступен полный набор тренировок.",
             reply_markup=kb_main(),
         )
@@ -2414,52 +2391,34 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg = (
                     "У Вас уже есть активная подписка ✅\n\n"
                     f"Начало: {start_d.strftime('%d.%m.%Y')}\n"
-                    f"Окончание: {end_d.strftime('%d.%м.%Y')}\n\n"
-                    "Вы можете продлить подписку на удобный срок 👇"
+                    f"Окончание: {end_d.strftime('%d.%m.%Y')}\n\n"
+                    "Можете открывать любые тренировки."
                 )
             else:
                 msg = (
-                    "У Вас уже есть активная подписка ✅\n\n"
-                    "Вы можете продлить её на удобный срок 👇"
+                    "У Вас уже есть активная подписка ✅\n"
+                    "Можете открыть любые тренировки."
                 )
 
             await update.message.reply_text(
                 msg,
-                reply_markup=ReplyKeyboardMarkup(
-                    [
-                        ["Продлить на месяц (1790⭐)", "Продлить на год (4990⭐)"],
-                        ["Вернуться в меню"],
-                    ],
-                    resize_keyboard=True,
-                ),
+                reply_markup=kb_main(),
                 protect_content=True,
             )
         else:
             await update.message.reply_text(
-                "Подписка даёт доступ ко всем тренировкам бота.\n\n"
-                "Доступные варианты:\n"
-                "• 1 месяц — 1790⭐\n"
-                "• 1 год — 4990⭐ (выгоднее)\n\n"
-                "Выберите формат подписки 👇",
+                "Подписка даёт доступ ко всем тренировкам бота на 1 год.\n\n"
+                "Чтобы оформить оплату через Telegram Stars, нажмите «Оформить подписку».",
                 reply_markup=ReplyKeyboardMarkup(
-                    [
-                        ["Оформить на месяц (1790⭐)", "Оформить на год (4990⭐)"],
-                        ["Вернуться в меню"],
-                    ],
+                    [["Оформить подписку", "Вернуться в меню"]],
                     resize_keyboard=True,
                 ),
                 protect_content=True,
             )
         return
 
-# Оформление / продление подписки (кнопки)
-    if text in ["Оформить на месяц (1790⭐)", "Продлить на месяц (1790⭐)"]:
-        await send_subscription_invoice(update, context, kind="month")
-        return
-
-    if text in ["Оформить на год (4990⭐)", "Продлить на год (4990⭐)", "Оформить подписку"]:
-        # "Оформить подписку" оставляем как синоним годового тарифа на всякий случай
-        await send_subscription_invoice(update, context, kind="year")
+    if text == "Оформить подписку":
+        await send_subscription_invoice(update, context)
         return
 
     # Правила
