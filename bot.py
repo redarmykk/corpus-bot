@@ -49,8 +49,8 @@ ADMIN_CHAT_ID = 503160725  # твой Telegram ID
 # ====== НАСТРОЙКИ ПОДПИСКИ / TELEGRAM STARS ======
 SUBSCRIPTION_YEAR_PAYLOAD = "corpus_subscription_year_v1"
 SUBSCRIPTION_MONTH_PAYLOAD = "corpus_subscription_month_v1"
-SUBSCRIPTION_YEAR_PRICE_STARS = 4990
-SUBSCRIPTION_MONTH_PRICE_STARS = 1490
+SUBSCRIPTION_YEAR_PRICE_STARS = 1
+SUBSCRIPTION_MONTH_PRICE_STARS = 1
 DEV_USER_IDS = {503160725, 304498036}                            # твой tg user_id
 SUBSCRIPTION_YEAR_DURATION_DAYS = 365
 SUBSCRIPTION_MONTH_DURATION_DAYS = 30
@@ -294,13 +294,8 @@ def get_subscription_dates(user_id: int):
         return None, None
     return sub["start"], sub["end"]
 
-def save_payment(user_id: int, charge_id: str, amount: int, currency: str):
-    """
-    Сохраняем информацию о платеже в таблицу payments.
-    Это нужно, чтобы потом можно было сделать рефанд по charge_id.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
+def ensure_payments_table(cur: sqlite3.Cursor):
+    """Ensure payments table exists with plan metadata columns."""
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS payments (
@@ -309,20 +304,51 @@ def save_payment(user_id: int, charge_id: str, amount: int, currency: str):
             charge_id TEXT NOT NULL,
             amount INTEGER NOT NULL,
             currency TEXT NOT NULL,
-            paid_at TEXT NOT NULL
+            paid_at TEXT NOT NULL,
+            plan_key TEXT,
+            duration_days INTEGER
         )
         """
     )
+
+    cols = {row[1] for row in cur.execute("PRAGMA table_info(payments)").fetchall()}
+    if "plan_key" not in cols:
+        cur.execute("ALTER TABLE payments ADD COLUMN plan_key TEXT")
+    if "duration_days" not in cols:
+        cur.execute("ALTER TABLE payments ADD COLUMN duration_days INTEGER")
+
+
+def save_payment(
+    user_id: int,
+    charge_id: str,
+    amount: int,
+    currency: str,
+    plan_key: str | None = None,
+    duration_days: int | None = None,
+):
+    """Persist payment info into the payments table."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    ensure_payments_table(cur)
+
     cur.execute(
         """
-        INSERT INTO payments (user_id, charge_id, amount, currency, paid_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO payments (user_id, charge_id, amount, currency, paid_at, plan_key, duration_days)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, charge_id, amount, currency, datetime.now(timezone.utc).isoformat()),
+        (
+            user_id,
+            charge_id,
+            amount,
+            currency,
+            datetime.now(timezone.utc).isoformat(),
+            plan_key,
+            duration_days,
+        ),
     )
     conn.commit()
     conn.close()
-
 
 def cancel_subscription_in_db(user_id: int):
     """
@@ -602,21 +628,12 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("SELECT user_id, start_date, end_date FROM subscriptions ORDER BY user_id")
     subs = cur.fetchall()
 
-    # таблица платежей
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            charge_id TEXT NOT NULL,
-            amount INTEGER NOT NULL,
-            currency TEXT NOT NULL,
-            paid_at TEXT NOT NULL
-        )
-    """)
+    # таблица платежей (приводим к новой схеме с хранением тарифа)
+    ensure_payments_table(cur)
 
     # берём последние платежи по каждому user_id
     cur.execute("""
-        SELECT user_id, charge_id, amount, currency, paid_at
+        SELECT user_id, charge_id, amount, currency, paid_at, plan_key, duration_days
         FROM payments
         WHERE id IN (
             SELECT MAX(id)
@@ -630,12 +647,14 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # превращаем платежи в удобный dict
     last_payments = {}
-    for uid, charge_id, amount, currency, paid_at in payments_raw:
+    for uid, charge_id, amount, currency, paid_at, plan_key, duration_days in payments_raw:
         last_payments[uid] = {
             "charge_id": charge_id,
             "amount": amount,
             "currency": currency,
             "paid_at": paid_at,
+            "plan_key": plan_key,
+            "duration_days": duration_days,
         }
 
     if not subs:
@@ -650,27 +669,63 @@ async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for user_id, start, end in subs:
         start_d = datetime.fromisoformat(start).date()
         end_d = datetime.fromisoformat(end).date()
-        is_active = "🟢 Активна" if end_d >= today else "🔴 Истекла"
+        is_active = "\U0001f7e2 Активна" if end_d >= today else "\U0001f534 Истекла"
+
+        payment_info = last_payments.get(user_id)
+        plan_key = None
+        plan_duration = None
+
+        if payment_info:
+            plan_key = payment_info.get("plan_key")
+            plan_duration = payment_info.get("duration_days")
+
+            if not plan_key:
+                candidates = [
+                    key
+                    for key, plan in SUBSCRIPTION_PLANS.items()
+                    if plan["price"] == payment_info["amount"] and payment_info["currency"] == "XTR"
+                ]
+                if len(candidates) == 1:
+                    plan_key = candidates[0]
+
+            if not plan_key and plan_duration:
+                if plan_duration >= SUBSCRIPTION_YEAR_DURATION_DAYS:
+                    plan_key = "year"
+                elif plan_duration >= SUBSCRIPTION_MONTH_DURATION_DAYS:
+                    plan_key = "month"
+
+            if not plan_duration and plan_key in SUBSCRIPTION_PLANS:
+                plan_duration = SUBSCRIPTION_PLANS[plan_key]["duration_days"]
+
+        total_span_days = (end_d - start_d).days + 1
+        if not plan_key:
+            if total_span_days >= SUBSCRIPTION_YEAR_DURATION_DAYS:
+                plan_key = "year"
+            elif total_span_days >= SUBSCRIPTION_MONTH_DURATION_DAYS:
+                plan_key = "month"
+
+        plan_label_map = {"year": "на 1 год", "month": "на 1 месяц"}
+        plan_text = plan_label_map.get(plan_key, "неизвестно")
 
         line = (
             f"<b>User ID:</b> {user_id}\n"
-            f"— Начало: {start_d.strftime('%d.%m.%Y')}\n"
-            f"— Конец: {end_d.strftime('%d.%m.%Y')}\n"
-            f"— Статус: {is_active}\n"
+            f"- Начало: {start_d.strftime('%d.%m.%Y')}\n"
+            f"- Конец: {end_d.strftime('%d.%m.%Y')}\n"
+            f"- Статус: {is_active}\n"
+            f"- Тариф: {plan_text}\n"
         )
 
-        # добавляем истории платежей, если есть
-        if user_id in last_payments:
-            p = last_payments[user_id]
-            paid_date = datetime.fromisoformat(p["paid_at"]).strftime('%d.%m.%Y %H:%M')
+        if payment_info:
+            paid_date = datetime.fromisoformat(payment_info["paid_at"]).strftime('%d.%m.%Y %H:%M')
             line += (
-                f"— 💸 Последний платёж:\n"
-                f"   charge_id: <code>{p['charge_id']}</code>\n"
-                f"   сумма: {p['amount']} {p['currency']}\n"
-                f"   дата: {paid_date}\n"
+                f"- \U0001f4b8 Последний платёж:\n"
+                f"   charge_id: <code>{payment_info['charge_id']}</code>\n"
+                f"   Сумма: {payment_info['amount']} {payment_info['currency']}\n"
+                f"   Тариф: {plan_text}\n"
+                f"   Дата: {paid_date}\n"
             )
         else:
-            line += "— 💸 Платежей нет\n"
+            line += "- \U0001f4b8 Платежей нет\n"
 
         line += "\n"
         msg_lines.append(line)
@@ -865,17 +920,21 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     sp = update.message.successful_payment
     user_id = update.effective_user.id
 
-    # 💾 Сохраняем платёж для рефандов
+    plan_key = PAYLOAD_TO_PLAN.get(sp.invoice_payload)
+    plan_duration = None
+    if plan_key and sp.currency == "XTR":
+        plan_duration = SUBSCRIPTION_PLANS[plan_key]["duration_days"]
+
+    # ????????? ?????? ??? ?????????? ????????
     save_payment(
         user_id=user_id,
         charge_id=sp.telegram_payment_charge_id,
         amount=sp.total_amount,
         currency=sp.currency,
+        plan_key=plan_key,
+        duration_days=plan_duration,
     )
 
-    plan_key = PAYLOAD_TO_PLAN.get(sp.invoice_payload)
-
-    # Проверяем правильный payload
     if sp.currency == "XTR" and plan_key:
         plan = SUBSCRIPTION_PLANS[plan_key]
         sub = create_or_extend_subscription(user_id, days=plan["duration_days"])
@@ -1331,6 +1390,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
