@@ -47,10 +47,37 @@ ADMIN_CHAT_ID = 503160725  # твой Telegram ID
 
 
 # ====== НАСТРОЙКИ ПОДПИСКИ / TELEGRAM STARS ======
-SUBSCRIPTION_PAYLOAD = "corpus_subscription_year_v1"  # payload инвойса
-SUBSCRIPTION_PRICE_STARS = 4990                       # 🎯 цена в звёздах
+SUBSCRIPTION_YEAR_PAYLOAD = "corpus_subscription_year_v1"
+SUBSCRIPTION_MONTH_PAYLOAD = "corpus_subscription_month_v1"
+SUBSCRIPTION_YEAR_PRICE_STARS = 4990
+SUBSCRIPTION_MONTH_PRICE_STARS = 1490
 DEV_USER_IDS = {503160725, 304498036}                            # твой tg user_id
-SUBSCRIPTION_DURATION_DAYS = 365                      # длительность подписки
+SUBSCRIPTION_YEAR_DURATION_DAYS = 365
+SUBSCRIPTION_MONTH_DURATION_DAYS = 30
+SUBSCRIPTION_DURATION_DAYS = SUBSCRIPTION_YEAR_DURATION_DAYS
+
+SUBSCRIPTION_PLANS = {
+    "month": {
+        "payload": SUBSCRIPTION_MONTH_PAYLOAD,
+        "price": SUBSCRIPTION_MONTH_PRICE_STARS,
+        "duration_days": SUBSCRIPTION_MONTH_DURATION_DAYS,
+        "label": "Подписка CORPUS на 1 месяц",
+        "title": "Подписка CORPUS (1 месяц)",
+        "description": "30 дней доступа ко всем тренировкам бота.",
+    },
+    "year": {
+        "payload": SUBSCRIPTION_YEAR_PAYLOAD,
+        "price": SUBSCRIPTION_YEAR_PRICE_STARS,
+        "duration_days": SUBSCRIPTION_YEAR_DURATION_DAYS,
+        "label": "Годовая подписка CORPUS",
+        "title": "Подписка CORPUS (1 год)",
+        "description": "12 месяцев доступа ко всем тренировкам бота.",
+    },
+}
+PAYLOAD_TO_PLAN = {plan["payload"]: key for key, plan in SUBSCRIPTION_PLANS.items()}
+# совместимость со старым кодом, по умолчанию — годовая подписка
+SUBSCRIPTION_PAYLOAD = SUBSCRIPTION_YEAR_PAYLOAD
+SUBSCRIPTION_PRICE_STARS = SUBSCRIPTION_YEAR_PRICE_STARS
 
 
 def revoke_subscription(user_id: int):
@@ -197,9 +224,9 @@ def save_subscription(user_id: int, start, end):
     conn.close()
 
 
-def create_or_extend_subscription(user_id: int) -> dict:
+def create_or_extend_subscription(user_id: int, days: int = SUBSCRIPTION_DURATION_DAYS) -> dict:
     """
-    Создаём или продлеваем подписку на SUBSCRIPTION_DURATION_DAYS дней.
+    Создаём или продлеваем подписку на заданное количество дней.
     Если подписка ещё действует — продлеваем от даты окончания.
     Если уже истекла или не было — считаем от сегодняшней даты.
     """
@@ -209,11 +236,11 @@ def create_or_extend_subscription(user_id: int) -> dict:
     if current and current["end"] >= today:
         # продлеваем от текущей даты окончания
         new_start = current["start"]
-        new_end = current["end"] + timedelta(days=SUBSCRIPTION_DURATION_DAYS)
+        new_end = current["end"] + timedelta(days=days)
     else:
         # новая или просроченная
         new_start = today
-        new_end = today + timedelta(days=SUBSCRIPTION_DURATION_DAYS)
+        new_end = today + timedelta(days=days)
 
     save_subscription(user_id, new_start, new_end)
     return {"start": new_start, "end": new_end}
@@ -362,6 +389,9 @@ ABC_TRAINING_BUTTONS = [
     ["Вернуться в меню"],
 ]
 
+SUBSCRIPTION_MONTH_BUTTON = "🗓 Подписка на 1 месяц"
+SUBSCRIPTION_YEAR_BUTTON = "📅 Подписка на 1 год"
+
 
 def kb_main():
     return ReplyKeyboardMarkup(MAIN_MENU_BUTTONS, resize_keyboard=True)
@@ -383,6 +413,16 @@ def kb_training_abc():
     return ReplyKeyboardMarkup(ABC_TRAINING_BUTTONS, resize_keyboard=True)
 
 
+def kb_subscription_plans():
+    return ReplyKeyboardMarkup(
+        [
+            [SUBSCRIPTION_MONTH_BUTTON, SUBSCRIPTION_YEAR_BUTTON],
+            ["Вернуться в меню"],
+        ],
+        resize_keyboard=True,
+    )
+
+
 # ====== СЛОВАРИ С ВИДЕО/ТЕКСТАМИ/ДОКУМЕНТАМИ ======
 # Данные вынесены в content_data.py, чтобы не держать file_id и тексты в основном файле.
 
@@ -390,7 +430,7 @@ def kb_training_abc():
 async def cmd_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Условия использования и оплаты:\n\n"
-        "- Подписка даёт доступ на 1 год ко всем тренировкам бота.\n"
+        "- Подписка даёт доступ ко всем тренировкам бота. Можно оформить на 1 месяц или на 1 год.\n"
         "- Оплата выполняется в Telegram Stars внутри приложения.\n"
         "- Покупая подписку, вы подтверждаете, что ознакомились с этими условиями.\n\n"
         "Важно: поддержка Telegram и @BotSupport не помогают по вопросам платежей за этот бот – "
@@ -760,7 +800,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ====== ОТПРАВКА ИНВОЙСА НА ПОДПИСКУ ======
-async def send_subscription_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_subscription_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, plan_key: str = "year"):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -782,18 +822,20 @@ async def send_subscription_invoice(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(txt, reply_markup=kb_main())
         return
 
+    plan = SUBSCRIPTION_PLANS.get(plan_key, SUBSCRIPTION_PLANS["year"])
+
     prices = [
         LabeledPrice(
-            label="Годовая подписка CORPUS",
-            amount=SUBSCRIPTION_PRICE_STARS,
+            label=plan["label"],
+            amount=plan["price"],
         )
     ]
 
     await context.bot.send_invoice(
         chat_id=chat_id,
-        title="Подписка CORPUS (1 год)",
-        description="Разовый платёж за годовой доступ ко всем тренировкам бота.",
-        payload=SUBSCRIPTION_PAYLOAD,
+        title=plan["title"],
+        description=plan["description"],
+        payload=plan["payload"],
         provider_token="",
         currency="XTR",
         prices=prices,
@@ -805,7 +847,7 @@ async def send_subscription_invoice(update: Update, context: ContextTypes.DEFAUL
 async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
 
-    if query.invoice_payload != SUBSCRIPTION_PAYLOAD:
+    if query.invoice_payload not in PAYLOAD_TO_PLAN:
         await query.answer(
             ok=False,
             error_message="Неизвестный платёж. Попробуйте ещё раз или напиши в /paysupport.",
@@ -831,9 +873,12 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         currency=sp.currency,
     )
 
+    plan_key = PAYLOAD_TO_PLAN.get(sp.invoice_payload)
+
     # Проверяем правильный payload
-    if sp.currency == "XTR" and sp.invoice_payload == SUBSCRIPTION_PAYLOAD:
-        sub = create_or_extend_subscription(user_id)
+    if sp.currency == "XTR" and plan_key:
+        plan = SUBSCRIPTION_PLANS[plan_key]
+        sub = create_or_extend_subscription(user_id, days=plan["duration_days"])
         start, end = sub["start"], sub["end"]
 
         await update.message.reply_text(
@@ -841,8 +886,10 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
             "Ваша подписка активирована.\n\n"
             f"Начало: {start.strftime('%d.%m.%Y')}\n"
             f"Окончание: {end.strftime('%d.%m.%Y')}\n\n"
-            "Теперь Вам доступен полный набор тренировок.",
+            "Теперь Вам доступен полный набор тренировок и общий чат с лекциями по питанию, полезными материалами и поддержкой 💗\n\n"
+            "[вступить в чат](https://t.me/+AOT_lFEIZzo5NTNi)",
             reply_markup=kb_main(),
+            parse_mode="Markdown",
         )
     else:
         await update.message.reply_text(
@@ -866,7 +913,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Подписка
-    if text == "✅Подписка":
+    if text in ["✅Подписка", "Оформить подписку"]:
         if has_sub:
             start_d, end_d = get_subscription_dates(user_id)
             if start_d and end_d:
@@ -889,25 +936,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text(
-                "Подписка даёт доступ ко всем тренировкам бота на 1 год.\n\n"
-                "Чтобы оформить оплату через Telegram Stars, нажмите «Оформить подписку».",
-                reply_markup=ReplyKeyboardMarkup(
-                    [["Оформить подписку", "Вернуться в меню"]],
-                    resize_keyboard=True,
-                ),
+                "Подписка даёт доступ ко всем тренировкам бота.\n"
+                "Выберите срок: на 1 месяц или на 1 год. Оплата в Telegram Stars.",
+                reply_markup=kb_subscription_plans(),
                 protect_content=True,
             )
         return
 
-    if text == "Оформить подписку":
-        await send_subscription_invoice(update, context)
+    if text == SUBSCRIPTION_MONTH_BUTTON:
+        await send_subscription_invoice(update, context, plan_key="month")
+        return
+
+    if text == SUBSCRIPTION_YEAR_BUTTON:
+        await send_subscription_invoice(update, context, plan_key="year")
         return
 
     # Правила
     if text == "⚠️Правила":
         await update.message.reply_text(
            "Условия использования и оплаты:\n\n"
-            "- Подписка даёт доступ на 1 год ко всем тренировкам бота.\n"
+            "- Подписка даёт доступ ко всем тренировкам бота. Можно оформить на 1 месяц или на 1 год.\n"
             "- Оплата выполняется в Telegram Stars внутри приложения.\n"
             "- Покупая подписку, вы подтверждаете, что ознакомились с этими условиями.\n\n"
             "Важно: поддержка Telegram и @BotSupport не помогают по вопросам платежей за этот бот – по всем вопросам обращайтесь только к автору бота.\n\n",
@@ -1283,5 +1331,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
