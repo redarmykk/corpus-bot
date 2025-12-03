@@ -1266,7 +1266,7 @@ async def send_training(update: Update, context: ContextTypes.DEFAULT_TYPE, plac
         for mid in messages_to_delete:
             context.job_queue.run_once(
                 delete_message_job,
-                when=86400,  # 24 часа
+                when=5,  # 24 часа
                 data={"chat_id": chat_id, "message_id": mid},
             )
 
