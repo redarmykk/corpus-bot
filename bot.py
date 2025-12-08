@@ -416,7 +416,7 @@ ABC_TRAINING_BUTTONS = [
 ]
 
 SUBSCRIPTION_MONTH_BUTTON = "🗓 Подписка на 1 месяц - 1490⭐"
-SUBSCRIPTION_YEAR_BUTTON = "📅 Подписка на 1 год - 4990⭐"
+SUBSCRIPTION_YEAR_BUTTON = "🗓 Подписка на 1 год - 4990⭐"
 
 
 def kb_main():
